@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QAI - 智能化测试用例管理平台</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif; }
+        #app { height: 100%; }
+        .el-container { height: 100%; }
+        .el-aside { background-color: #304156; color: white; transition: width 0.3s; }
+        .el-menu { border-right: none; background-color: transparent; }
+        .el-menu-item { color: #bfcbd9; }
+        .el-menu-item:hover, .el-menu-item.is-active { background-color: #263445 !important; color: #409EFF !important; }
+        .logo { height: 60px; line-height: 60px; text-align: center; font-size: 20px; font-weight: bold; color: white; background-color: #2b2f3a; }
+        .el-header { background-color: white; border-bottom: 1px solid #dcdfe6; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .el-main { background-color: #f0f2f5; padding: 20px; }
+        .content-card { background: white; padding: 20px; border-radius: 4px; min-height: calc(100% - 40px); }
+        .table-action { display: flex; gap: 8px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <el-container>
+            <el-aside width="220px">
+                <div class="logo">QAI 智能测试</div>
+                <el-menu :default-active="activeMenu" @select="handleSelect" text-color="#bfcbd9" active-text-color="#409EFF">
+                    <el-menu-item index="requirements">
+                        <el-icon><Document /></el-icon>
+                        <span>需求库</span>
+                    </el-menu-item>
+                    <el-menu-item index="testcases">
+                        <el-icon><List /></el-icon>
+                        <span>用例库</span>
+                    </el-menu-item>
+                    <el-menu-item index="settings">
+                        <el-icon><Setting /></el-icon>
+                        <span>系统设置</span>
+                    </el-menu-item>
+                </el-menu>
+            </el-aside>
+            <el-container>
+                <el-header>
+                    <div style="font-size: 18px; font-weight: 500;">{{ currentTitle }}</div>
+                    <el-button type="text">帮助文档</el-button>
+                </el-header>
+                <el-main>
+                    <div class="content-card">
+                        
+                        <!-- 模块：需求库 -->
+                        <div v-if="activeMenu === 'requirements'">
+                            <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
+                                <el-input v-model="reqSearch" placeholder="搜索需求标题" style="width: 300px;" prefix-icon="Search"></el-input>
+                                <div>
+                                    <input type="file" ref="reqImportInput" style="display: none" accept=".md" @change="handleReqImportFile">
+                                    <el-button type="warning" @click="triggerReqImport">导入 Markdown 需求</el-button>
+                                    <el-button type="primary" @click="openReqDialog()">+ 新增需求</el-button>
+                                </div>
+                            </div>
+                            <el-table :data="filteredRequirements" border stripe v-loading="loadingReq">
+                                <el-table-column prop="id" label="ID" width="80"></el-table-column>
+                                <el-table-column prop="title" label="需求标题" min-width="200"></el-table-column>
+                                <el-table-column prop="created_at" label="创建时间" width="180">
+                                    <template #default="scope">{{ formatDate(scope.row.created_at) }}</template>
+                                </el-table-column>
+                                <el-table-column label="操作" width="350">
+                                    <template #default="scope">
+                                        <el-button size="small" type="success" @click="handleGenerate(scope.row)">智能生成 (Wizard)</el-button>
+                                        <el-button size="small" type="warning" @click="handleSyncKB(scope.row)">同步知识库</el-button>
+                                        <el-button size="small" type="primary" @click="openReqDialog(scope.row)">编辑</el-button>
+                                        <el-button size="small" type="danger" @click="deleteReq(scope.row)">删除</el-button>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </div>
+
+                        <!-- 模块：用例库 -->
+                        <div v-if="activeMenu === 'testcases'">
+                            <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
+                                <div style="display: flex; gap: 10px;">
+                                    <el-input v-model="caseSearch" placeholder="搜索用例标题/模块" style="width: 250px;" prefix-icon="Search"></el-input>
+                                    <el-select v-model="filterPriority" placeholder="优先级筛选" clearable style="width: 120px;">
+                                        <el-option label="P0 (最高)" value="P0"></el-option>
+                                        <el-option label="P1 (高)" value="P1"></el-option>
+                                        <el-option label="P2 (中)" value="P2"></el-option>
+                                        <el-option label="P3 (低)" value="P3"></el-option>
+                                    </el-select>
+                                    <el-select v-model="filterReqId" placeholder="按需求筛选" clearable style="width: 200px;">
+                                        <el-option v-for="req in requirements" :key="req.id" :label="req.title" :value="req.id"></el-option>
+                                    </el-select>
+                                </div>
+                                <div>
+                                    <input type="file" ref="importFileInput" style="display: none" accept=".csv, .xlsx" @change="handleImportFile">
+                                    <el-button type="info" text @click="downloadTemplate" style="margin-right: 10px;">下载导入模板</el-button>
+                                    <el-button type="warning" @click="triggerImport">导入数据</el-button>
+                                    <el-dropdown split-button type="success" @click="exportTestCases('xlsx')" @command="exportTestCases">
+                                        导出数据
+                                        <template #dropdown>
+                                            <el-dropdown-menu>
+                                                <el-dropdown-item command="xlsx">导出 Excel (.xlsx)</el-dropdown-item>
+                                                <el-dropdown-item command="csv">导出 CSV (.csv)</el-dropdown-item>
+                                            </el-dropdown-menu>
+                                        </template>
+                                    </el-dropdown>
+                                    <el-button type="primary" @click="openCaseDialog()">+ 新增用例</el-button>
+                                </div>
+                            </div>
+                            <el-table :data="filteredTestCases" border stripe v-loading="loadingCase">
+                                <el-table-column prop="id" label="ID" width="60"></el-table-column>
+                                <el-table-column prop="module" label="模块" width="100"></el-table-column>
+                                <el-table-column prop="title" label="用例标题" min-width="150" show-overflow-tooltip></el-table-column>
+                                <el-table-column prop="precondition" label="前置条件" show-overflow-tooltip></el-table-column>
+                                <el-table-column prop="steps" label="操作步骤" show-overflow-tooltip></el-table-column>
+                                <el-table-column prop="expected_result" label="预期结果" show-overflow-tooltip></el-table-column>
+                                <el-table-column prop="priority" label="优先级" width="80">
+                                    <template #default="{row}">
+                                        <el-tag :type="getPriorityType(row.priority)">{{ row.priority }}</el-tag>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column prop="actual_result" label="实际结果" show-overflow-tooltip></el-table-column>
+                                <el-table-column prop="remark" label="备注" show-overflow-tooltip></el-table-column>
+                                <el-table-column label="操作" width="150" fixed="right">
+                                    <template #default="scope">
+                                        <el-button size="small" type="info" @click="generateScript(scope.row)">生成脚本</el-button>
+                                        <el-button size="small" type="primary" @click="openCaseDialog(scope.row)">编辑</el-button>
+                                        <el-button size="small" type="danger" @click="deleteCase(scope.row)">删除</el-button>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </div>
+
+                        <!-- 模块：系统设置 -->
+                        <div v-if="activeMenu === 'settings'">
+                            <el-row :gutter="20">
+                                <el-col :span="12">
+                                    <h3>LLM 模型配置</h3>
+                                    <el-form label-position="top">
+                                        <el-form-item label="模型提供商">
+                                            <el-radio-group v-model="settings.provider">
+                                                <el-radio label="deepseek">DeepSeek</el-radio>
+                                                <el-radio label="zhipu">智谱 AI</el-radio>
+                                                <el-radio label="openai">OpenAI</el-radio>
+                                                <el-radio label="moonshot">Kimi (月之暗面)</el-radio>
+                                                <el-radio label="minimax">MiniMax</el-radio>
+                                                <el-radio label="qwen">通义千问</el-radio>
+                                                <el-radio label="google">Google Gemini</el-radio>
+                                                <el-radio label="custom">自定义</el-radio>
+                                            </el-radio-group>
+                                        </el-form-item>
+                                        <el-form-item label="API Base URL">
+                                            <el-input v-model="settings.baseUrl" placeholder="https://api.deepseek.com/v1"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="API Key">
+                                            <el-input v-model="settings.apiKey" type="password" show-password placeholder="sk-xxxxxxxx"></el-input>
+                                        </el-form-item>
+                                        <el-form-item label="模型名称 (Model Name)">
+                                            <el-select v-model="settings.modelName" placeholder="选择或输入模型" filterable allow-create default-first-option style="width: 100%">
+                                                <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m"></el-option>
+                                            </el-select>
+                                        </el-form-item>
+                                        <el-form-item>
+                                            <el-button type="primary" @click="saveSettings">保存配置</el-button>
+                                        </el-form-item>
+                                    </el-form>
+                                </el-col>
+                            </el-row>
+                        </div>
+
+                    </div>
+                </el-main>
+            </el-container>
+        </el-container>
+
+        <!-- Dialog: Requirement -->
+        <el-dialog v-model="reqDialog.visible" :title="reqDialog.isEdit ? '编辑需求' : '新增需求'" width="50%">
+            <el-form :model="reqForm" label-width="80px">
+                <el-form-item label="需求标题">
+                    <el-input v-model="reqForm.title"></el-input>
+                </el-form-item>
+                <el-form-item label="需求详情">
+                    <el-input v-model="reqForm.content" type="textarea" :rows="10"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="reqDialog.visible = false">取消</el-button>
+                <el-button type="primary" @click="submitReq" :loading="reqDialog.loading">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- Dialog: Test Case -->
+        <el-dialog v-model="caseDialog.visible" :title="caseDialog.isEdit ? '编辑用例' : '新增用例'" width="60%">
+            <el-form :model="caseForm" label-width="100px">
+                <el-row :gutter="20">
+                    <el-col :span="12">
+                        <el-form-item label="关联需求">
+                            <el-select v-model="caseForm.requirement_id" placeholder="请选择需求" style="width: 100%">
+                                <el-option v-for="req in requirements" :key="req.id" :label="req.title" :value="req.id"></el-option>
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                         <el-form-item label="模块">
+                            <el-input v-model="caseForm.module"></el-input>
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+                <el-form-item label="用例标题">
+                    <el-input v-model="caseForm.title"></el-input>
+                </el-form-item>
+                <el-row :gutter="20">
+                    <el-col :span="12">
+                        <el-form-item label="优先级">
+                            <el-select v-model="caseForm.priority" style="width: 100%">
+                                <el-option label="P0 (最高)" value="P0"></el-option>
+                                <el-option label="P1 (高)" value="P1"></el-option>
+                                <el-option label="P2 (中)" value="P2"></el-option>
+                                <el-option label="P3 (低)" value="P3"></el-option>
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+                <el-form-item label="前置条件">
+                    <el-input v-model="caseForm.precondition" type="textarea" :rows="2"></el-input>
+                </el-form-item>
+                <el-form-item label="操作步骤">
+                    <el-input v-model="caseForm.steps" type="textarea" :rows="4"></el-input>
+                </el-form-item>
+                <el-form-item label="预期结果">
+                    <el-input v-model="caseForm.expected_result" type="textarea" :rows="2"></el-input>
+                </el-form-item>
+                <el-form-item label="实际结果">
+                    <el-input v-model="caseForm.actual_result" type="textarea" :rows="2"></el-input>
+                </el-form-item>
+                <el-form-item label="备注">
+                    <el-input v-model="caseForm.remark"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="caseDialog.visible = false">取消</el-button>
+                <el-button type="primary" @click="submitCase" :loading="caseDialog.loading">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- Dialog: Smart Wizard -->
+        <el-dialog v-model="wizard.visible" title="智能用例生成向导" width="70%" :close-on-click-modal="false">
+            <el-steps :active="wizard.step" finish-status="success" align-center style="margin-bottom: 20px;">
+                <el-step title="模块拆分"></el-step>
+                <el-step title="场景设计"></el-step>
+                <el-step title="用例生成"></el-step>
+            </el-steps>
+
+            <div v-loading="wizard.loading" style="min-height: 200px;">
+                
+                <!-- Step 1: Modules -->
+                <div v-if="wizard.step === 1">
+                    <p>AI 已识别出以下功能模块，请选择需要测试的模块：</p>
+                    <el-checkbox-group v-model="wizard.selectedModules">
+                        <el-checkbox v-for="mod in wizard.modules" :key="mod" :label="mod" border style="margin: 5px;"></el-checkbox>
+                    </el-checkbox-group>
+                    <div v-if="wizard.modules.length === 0 && !wizard.loading" style="color: gray; text-align: center; margin-top: 20px;">
+                        未识别到模块，请重试或检查 LLM 配置
+                    </div>
+                </div>
+
+                <!-- Step 2: Scenarios -->
+                <div v-if="wizard.step === 2">
+                    <p>AI 为选定模块设计了以下测试场景，请选择：</p>
+                    <div v-for="(scenarios, mod) in wizard.scenarios" :key="mod" style="margin-bottom: 15px;">
+                        <h4>{{ mod }}</h4>
+                        <el-checkbox-group v-model="wizard.selectedScenarios[mod]">
+                            <el-checkbox v-for="scen in scenarios" :key="scen" :label="scen" style="display: block; margin-left: 0; margin-bottom: 5px;">
+                                {{ scen }}
+                            </el-checkbox>
+                        </el-checkbox-group>
+                    </div>
+                </div>
+
+                <!-- Step 3: Cases -->
+                <div v-if="wizard.step === 3">
+                    <p>AI 基于 RAG 知识库生成的测试用例预览：</p>
+                    <el-table :data="wizard.generatedCases" height="400" border stripe>
+                        <el-table-column prop="module" label="模块" width="100"></el-table-column>
+                        <el-table-column prop="title" label="标题" width="200"></el-table-column>
+                        <el-table-column prop="priority" label="优先级" width="80"></el-table-column>
+                        <el-table-column prop="steps" label="步骤" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="expected_result" label="预期" show-overflow-tooltip></el-table-column>
+                    </el-table>
+                </div>
+            </div>
+
+            <template #footer>
+                <el-button @click="wizard.visible = false" v-if="!wizard.loading">取消</el-button>
+                <el-button type="primary" @click="wizardAnalyze" v-if="wizard.step === 1 && !wizard.loading">重新分析</el-button>
+                <el-button type="primary" @click="wizardNextToScenarios" v-if="wizard.step === 1" :loading="wizard.loading">下一步：生成场景</el-button>
+                <el-button type="primary" @click="wizardNextToCases" v-if="wizard.step === 2" :loading="wizard.loading">下一步：生成用例</el-button>
+                <el-button type="success" @click="wizardSave" v-if="wizard.step === 3" :loading="wizard.loading">保存全部用例</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- Dialog: Script View -->
+        <el-dialog v-model="scriptDialog.visible" title="自动化脚本预览 (Playwright/Python)" width="60%">
+            <div v-loading="scriptDialog.loading">
+                <el-input type="textarea" v-model="scriptDialog.code" :rows="20" readonly style="font-family: monospace;"></el-input>
+            </div>
+            <template #footer>
+                <el-button @click="scriptDialog.visible = false">关闭</el-button>
+            </template>
+        </el-dialog>
+
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, computed, onMounted, watch } = Vue;
+        const { ElMessage, ElMessageBox } = ElementPlus;
+        const icons = ElementPlusIconsVue;
+
+        const API_BASE = 'http://localhost:8000/api/v1';
+
+        const app = createApp({
+            setup() {
+                const activeMenu = ref('requirements');
+                const currentTitle = computed(() => {
+                    const map = { requirements: '需求库', testcases: '用例库', settings: '系统设置' };
+                    return map[activeMenu.value];
+                });
+
+                // --- Data ---
+                const requirements = ref([]);
+                const testCases = ref([]);
+                const loadingReq = ref(false);
+                const loadingCase = ref(false);
+                const reqSearch = ref('');
+                const caseSearch = ref('');
+                const filterReqId = ref('');
+                const filterPriority = ref('');
+
+                // --- Settings ---
+                const settings = reactive({
+                    provider: 'deepseek',
+                    baseUrl: 'https://api.deepseek.com/v1',
+                    apiKey: '',
+                    modelName: 'deepseek-chat'
+                });
+
+                // --- Dialogs ---
+                const reqDialog = reactive({ visible: false, isEdit: false, loading: false });
+                const reqForm = reactive({ id: null, title: '', content: '' });
+                
+                const caseDialog = reactive({ visible: false, isEdit: false, loading: false });
+                const caseForm = reactive({ 
+                    id: null, requirement_id: null, module: '', title: '', 
+                    priority: 'P2', precondition: '', steps: '', 
+                    expected_result: '', actual_result: '', remark: '' 
+                });
+
+                const genDialog = reactive({ visible: false }); // Deprecated, replaced by wizard
+                
+                // --- Wizard State ---
+                const wizard = reactive({
+                    visible: false,
+                    step: 1,
+                    loading: false,
+                    reqId: null,
+                    reqContent: '',
+                    modules: [],
+                    selectedModules: [],
+                    scenarios: {},      // Map<Module, List<String>>
+                    selectedScenarios: {}, // Map<Module, List<String>>
+                    generatedCases: []
+                });
+
+                // --- Script Gen State ---
+                const scriptDialog = reactive({ visible: false, code: '', loading: false });
+
+                // --- Watchers ---
+                watch(() => settings.provider, (newVal) => {
+                    const providerMap = {
+                        deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+                        zhipu: { url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4' },
+                        openai: { url: 'https://api.openai.com/v1', model: 'gpt-4o' },
+                        moonshot: { url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+                        minimax: { url: 'https://api.minimax.chat/v1', model: 'MiniMax-M2.1' },
+                        qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+                        google: { url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash' },
+                        custom: { url: '', model: '' }
+                    };
+                    const config = providerMap[newVal];
+                    if (config) {
+                        if (newVal !== 'custom') {
+                            settings.baseUrl = config.url;
+                            settings.modelName = config.model;
+                        }
+                        settings.apiKey = ''; // Clear API Key for security/correctness
+                    }
+                });
+
+                const modelOptions = computed(() => {
+                    const map = {
+                        deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+                        zhipu: ['glm-4', 'glm-4-flash', 'glm-4-plus'],
+                        openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+                        moonshot: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+                        minimax: ['MiniMax-M2.1', 'abab6.5-chat', 'abab6.5s-chat'],
+                        qwen: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'Qwen/Qwen2.5-72B-Instruct'],
+                        google: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'],
+                        custom: []
+                    };
+                    return map[settings.provider] || [];
+                });
+
+                // --- Methods: Test Cases Import/Export ---
+                const exportTestCases = (format) => {
+                    const params = new URLSearchParams();
+                    if (filterReqId.value) params.append('requirement_id', filterReqId.value);
+                    params.append('format', format);
+                    
+                    const url = `${API_BASE}/testcases/export?${params.toString()}`;
+                    window.open(url, '_blank');
+                };
+
+                const downloadTemplate = () => {
+                    window.open(`${API_BASE}/testcases/template`, '_blank');
+                };
+
+                const importFileInput = ref(null);
+                const triggerImport = () => {
+                    importFileInput.value.click();
+                };
+
+                const handleImportFile = async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    loadingCase.value = true;
+                    try {
+                        const res = await axios.post(`${API_BASE}/testcases/import`, formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' }
+                        });
+                        ElMessage.success(`成功导入 ${res.data.count} 条用例`);
+                        fetchTestCases();
+                    } catch (e) {
+                        ElMessage.error('导入失败: ' + (e.response?.data?.detail || e.message));
+                    } finally {
+                        loadingCase.value = false;
+                        event.target.value = ''; // Reset input
+                    }
+                };
+
+                // --- Lifecycle ---
+                onMounted(() => {
+                    loadSettings();
+                    fetchRequirements();
+                    fetchTestCases();
+                });
+
+                // --- Methods: Common ---
+                const handleSelect = (index) => {
+                    activeMenu.value = index;
+                    if (index === 'requirements') fetchRequirements();
+                    if (index === 'testcases') fetchTestCases();
+                };
+                
+                const formatDate = (str) => {
+                    if (!str) return '';
+                    return new Date(str).toLocaleString();
+                };
+
+                const getPriorityType = (p) => {
+                    if (p === 'P0') return 'danger';
+                    if (p === 'P1') return 'warning';
+                    if (p === 'P2') return 'primary';
+                    return 'info';
+                };
+
+                // --- Methods: Settings ---
+                const loadSettings = () => {
+                    const saved = localStorage.getItem('qai_settings') || localStorage.getItem('tcms_settings');
+                    if (saved) {
+                        Object.assign(settings, JSON.parse(saved));
+                    }
+                };
+                const saveSettings = () => {
+                    localStorage.setItem('qai_settings', JSON.stringify(settings));
+                    ElMessage.success('配置已保存');
+                };
+
+                // --- Methods: Requirements ---
+                const fetchRequirements = async () => {
+                    loadingReq.value = true;
+                    try {
+                        const res = await axios.get(`${API_BASE}/requirements/`);
+                        requirements.value = res.data;
+                    } catch (e) { console.error(e); }
+                    loadingReq.value = false;
+                };
+
+                const openReqDialog = (row = null) => {
+                    reqDialog.isEdit = !!row;
+                    reqDialog.visible = true;
+                    if (row) {
+                        reqForm.id = row.id;
+                        reqForm.title = row.title;
+                        reqForm.content = row.content;
+                    } else {
+                        reqForm.id = null;
+                        reqForm.title = '';
+                        reqForm.content = '';
+                    }
+                };
+
+                const submitReq = async () => {
+                    if (!reqForm.title || !reqForm.content) return ElMessage.warning('请填写完整');
+                    reqDialog.loading = true;
+                    try {
+                        if (reqDialog.isEdit) {
+                            await axios.put(`${API_BASE}/requirements/${reqForm.id}`, reqForm);
+                            ElMessage.success('更新成功');
+                        } else {
+                            await axios.post(`${API_BASE}/requirements/`, reqForm);
+                            ElMessage.success('创建成功');
+                        }
+                        reqDialog.visible = false;
+                        fetchRequirements();
+                    } catch (e) { ElMessage.error('操作失败'); }
+                    reqDialog.loading = false;
+                };
+
+                const deleteReq = async (row) => {
+                    try {
+                        await ElMessageBox.confirm('确定删除该需求及其关联用例吗？', '提示', { type: 'warning' });
+                        await axios.delete(`${API_BASE}/requirements/${row.id}`);
+                        ElMessage.success('删除成功');
+                        fetchRequirements();
+                    } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败'); }
+                };
+
+                const reqImportInput = ref(null);
+                
+                const triggerReqImport = () => {
+                    reqImportInput.value.click();
+                };
+
+                const handleReqImportFile = async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    try {
+                        await ElMessageBox.confirm(`确定要导入文件 "${file.name}" 吗？`, '导入确认', {
+                            confirmButtonText: '确定导入',
+                            cancelButtonText: '取消',
+                            type: 'info'
+                        });
+                        
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        
+                        loadingReq.value = true;
+                        const res = await axios.post(`${API_BASE}/requirements/import_file`, formData, {
+                            headers: { 'Content-Type': 'multipart/form-data' }
+                        });
+                        ElMessage.success(res.data.message);
+                        fetchRequirements();
+                    } catch (e) {
+                        if (e !== 'cancel') {
+                            ElMessage.error('导入失败: ' + (e.response?.data?.detail || e.message));
+                        }
+                    } finally {
+                        loadingReq.value = false;
+                        event.target.value = ''; // Reset
+                    }
+                };
+
+                const handleSyncKB = async (row) => {
+                     try {
+                        await axios.post(`${API_BASE}/requirements/${row.id}/sync_kb`);
+                        ElMessage.success('同步至知识库成功！');
+                    } catch (e) {
+                        ElMessage.error('同步失败: ' + (e.response?.data?.detail || e.message));
+                    }
+                };
+
+                const handleGenerate = (row) => {
+                    wizard.reqId = row.id;
+                    wizard.reqContent = row.content;
+                    wizard.step = 1;
+                    wizard.modules = [];
+                    wizard.selectedModules = [];
+                    wizard.scenarios = {};
+                    wizard.selectedScenarios = {};
+                    wizard.generatedCases = [];
+                    wizard.visible = true;
+                    wizardAnalyze();
+                };
+
+                const wizardAnalyze = async () => {
+                    wizard.loading = true;
+                    try {
+                        const res = await axios.post(`${API_BASE}/ai/analyze_modules`, {
+                            requirement_content: wizard.reqContent,
+                            api_key: settings.apiKey,
+                            base_url: settings.baseUrl,
+                            model: settings.modelName
+                        });
+                        wizard.modules = res.data;
+                        wizard.selectedModules = [...res.data];
+                    } catch (e) { 
+                        console.error(e);
+                        ElMessage.error('分析模块失败: ' + (e.response?.data?.detail || e.message)); 
+                    }
+                    wizard.loading = false;
+                };
+
+                const wizardNextToScenarios = async () => {
+                    if (wizard.selectedModules.length === 0) return ElMessage.warning('请至少选择一个模块');
+                    wizard.step = 2;
+                    wizard.loading = true;
+                    wizard.scenarios = {};
+                    wizard.selectedScenarios = {};
+                    
+                    try {
+                        for (const mod of wizard.selectedModules) {
+                            const res = await axios.post(`${API_BASE}/ai/generate_scenarios`, {
+                                requirement_content: wizard.reqContent,
+                                module: mod,
+                                api_key: settings.apiKey,
+                                base_url: settings.baseUrl,
+                                model: settings.modelName
+                            });
+                            wizard.scenarios[mod] = res.data;
+                            wizard.selectedScenarios[mod] = [...res.data];
+                        }
+                    } catch (e) { ElMessage.error('场景生成失败'); }
+                    wizard.loading = false;
+                };
+
+                const wizardNextToCases = async () => {
+                    let count = 0;
+                    for (const mod in wizard.selectedScenarios) {
+                        if (wizard.selectedScenarios[mod]) count += wizard.selectedScenarios[mod].length;
+                    }
+                    if (count === 0) return ElMessage.warning('请至少选择一个场景');
+
+                    wizard.step = 3;
+                    wizard.loading = true;
+                    wizard.generatedCases = [];
+
+                    try {
+                        for (const mod in wizard.selectedScenarios) {
+                            const scenarios = wizard.selectedScenarios[mod] || [];
+                            for (const scen of scenarios) {
+                                const res = await axios.post(`${API_BASE}/ai/generate_cases`, {
+                                    requirement_content: wizard.reqContent,
+                                    module: mod,
+                                    scenario: scen,
+                                    api_key: settings.apiKey,
+                                    base_url: settings.baseUrl,
+                                    model: settings.modelName
+                                });
+                                // Add req_id
+                                const newCases = res.data.map(c => ({...c, requirement_id: wizard.reqId}));
+                                wizard.generatedCases.push(...newCases);
+                            }
+                        }
+                    } catch (e) { ElMessage.error('用例生成失败'); }
+                    wizard.loading = false;
+                };
+
+                const wizardSave = async () => {
+                    wizard.loading = true;
+                    try {
+                        for (const c of wizard.generatedCases) {
+                            await axios.post(`${API_BASE}/testcases/`, c);
+                        }
+                        ElMessage.success(`成功保存 ${wizard.generatedCases.length} 条用例`);
+                        wizard.visible = false;
+                    } catch (e) { ElMessage.error('保存失败'); }
+                    wizard.loading = false;
+                };
+
+                const generateScript = async (row) => {
+                    scriptDialog.loading = true;
+                    scriptDialog.visible = true;
+                    scriptDialog.code = 'Generating script...';
+                    try {
+                        const res = await axios.post(`${API_BASE}/ai/generate_script`, {
+                            test_case: row,
+                            api_key: settings.apiKey,
+                            base_url: settings.baseUrl,
+                            model: settings.modelName
+                        });
+                        scriptDialog.code = res.data.script;
+                    } catch (e) { 
+                        scriptDialog.code = '# Error generating script'; 
+                        ElMessage.error('生成脚本失败'); 
+                    }
+                    scriptDialog.loading = false;
+                };
+
+                // --- Methods: Test Cases ---
+                const fetchTestCases = async () => {
+                    loadingCase.value = true;
+                    try {
+                        const res = await axios.get(`${API_BASE}/testcases/`);
+                        testCases.value = res.data;
+                    } catch (e) { console.error(e); }
+                    loadingCase.value = false;
+                };
+
+                const filteredRequirements = computed(() => {
+                    if (!reqSearch.value) return requirements.value;
+                    return requirements.value.filter(r => r.title.includes(reqSearch.value));
+                });
+
+                const filteredTestCases = computed(() => {
+                    let list = testCases.value;
+                    if (filterReqId.value) {
+                        list = list.filter(c => c.requirement_id === filterReqId.value);
+                    }
+                    if (filterPriority.value) {
+                        list = list.filter(c => c.priority === filterPriority.value);
+                    }
+                    if (caseSearch.value) {
+                        const k = caseSearch.value.toLowerCase();
+                        list = list.filter(c => c.title.toLowerCase().includes(k) || (c.module && c.module.toLowerCase().includes(k)));
+                    }
+                    // Sort by ID to match backend export
+                    return list.sort((a, b) => a.id - b.id);
+                });
+
+                const openCaseDialog = (row = null) => {
+                    caseDialog.isEdit = !!row;
+                    caseDialog.visible = true;
+                    if (row) {
+                        Object.assign(caseForm, row);
+                    } else {
+                        Object.assign(caseForm, { 
+                            id: null, requirement_id: filterReqId.value || null, module: '', title: '', 
+                            priority: 'P2', precondition: '', steps: '', 
+                            expected_result: '', actual_result: '', remark: '' 
+                        });
+                    }
+                };
+
+                const submitCase = async () => {
+                    if (!caseForm.title || !caseForm.requirement_id) return ElMessage.warning('请填写标题并选择需求');
+                    caseDialog.loading = true;
+                    try {
+                        if (caseDialog.isEdit) {
+                            await axios.put(`${API_BASE}/testcases/${caseForm.id}`, caseForm);
+                            ElMessage.success('更新成功');
+                        } else {
+                            await axios.post(`${API_BASE}/testcases/`, caseForm);
+                            ElMessage.success('创建成功');
+                        }
+                        caseDialog.visible = false;
+                        fetchTestCases();
+                    } catch (e) { ElMessage.error('操作失败'); }
+                    caseDialog.loading = false;
+                };
+
+                const deleteCase = async (row) => {
+                    try {
+                        await ElMessageBox.confirm('确定删除该用例吗？', '提示', { type: 'warning' });
+                        await axios.delete(`${API_BASE}/testcases/${row.id}`);
+                        ElMessage.success('删除成功');
+                        fetchTestCases();
+                    } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败'); }
+                };
+
+                return {
+                    activeMenu, currentTitle, handleSelect, formatDate, getPriorityType,
+                    requirements, testCases, loadingReq, loadingCase, reqSearch, caseSearch, filterReqId,
+                    filteredRequirements, filteredTestCases,
+                    settings, saveSettings, modelOptions,
+                    reqDialog, reqForm, openReqDialog, submitReq, deleteReq, handleGenerate, handleSyncKB, reqImportInput, triggerReqImport, handleReqImportFile,
+                    caseDialog, caseForm, openCaseDialog, submitCase, deleteCase,
+                    genDialog,
+                    wizard, wizardAnalyze, wizardNextToScenarios, wizardNextToCases, wizardSave,
+                    scriptDialog, generateScript,
+                    exportTestCases, importFileInput, triggerImport, handleImportFile, downloadTemplate, filterPriority
+                };
+            }
+        });
+
+        for (const [key, component] of Object.entries(icons)) {
+            app.component(key, component);
+        }
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>

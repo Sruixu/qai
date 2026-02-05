@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlmodel
+langchain
+langchain-openai
+langchain-community
+chromadb
+python-multipart
+httpx
