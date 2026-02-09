@@ -40,11 +40,32 @@ def sync_req_to_kb(session: Session, requirement_id: int):
 @router.get("/testcases/", response_model=List[TestCaseRead])
 def read_test_cases(
     requirement_id: Optional[int] = None, 
+    project_id: Optional[int] = None, # Added project filter
+    version_id: Optional[int] = None,
     offset: int = 0, 
-    limit: int = 100, 
+    limit: int = 5000, 
     session: Session = Depends(get_session)
 ):
     query = select(TestCase)
+    
+    # Filter by Project or Version via Requirement join
+    if project_id or version_id:
+        query = query.join(Requirement)
+        
+        if version_id:
+            query = query.where(Requirement.version_id == version_id)
+        elif project_id:
+            # If only project is selected, filter by project_id in requirement
+            # Note: Requirement model must have project_id or access via version
+            # Let's check Requirement model. It has 'version' relation.
+            # But wait, Requirement usually links to a Version, which links to Project.
+            # Or Requirement has direct project_id? 
+            # Looking at previous code, Requirement has version_id. 
+            # Version has project_id.
+            # So we might need to join Version too.
+            from app.models.models import ProjectVersion
+            query = query.join(ProjectVersion).where(ProjectVersion.project_id == project_id)
+
     if requirement_id:
         query = query.where(TestCase.requirement_id == requirement_id)
     
@@ -260,6 +281,46 @@ def update_test_case(case_id: int, test_case: TestCaseUpdate, session: Session =
     sync_req_to_kb(session, db_case.requirement_id)
     
     return db_case
+
+@router.delete("/testcases/batch")
+def batch_delete_test_cases(
+    requirement_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+    version_id: Optional[int] = None,
+    confirm: bool = False,
+    session: Session = Depends(get_session)
+):
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Must confirm deletion")
+        
+    query = select(TestCase)
+    has_filter = False
+    
+    if project_id or version_id:
+        query = query.join(Requirement)
+        has_filter = True
+        if version_id:
+            query = query.where(Requirement.version_id == version_id)
+        elif project_id:
+            from app.models.models import ProjectVersion
+            query = query.join(ProjectVersion).where(ProjectVersion.project_id == project_id)
+            
+    if requirement_id:
+        query = query.where(TestCase.requirement_id == requirement_id)
+        has_filter = True
+        
+    if not has_filter:
+        # If no filter provided, delete ALL? Only if explicit intent
+        pass 
+        
+    cases = session.exec(query).all()
+    count = len(cases)
+    
+    for c in cases:
+        session.delete(c)
+        
+    session.commit()
+    return {"message": f"Deleted {count} test cases"}
 
 @router.delete("/testcases/{case_id}")
 def delete_test_case(case_id: int, session: Session = Depends(get_session)):

@@ -9,6 +9,12 @@
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
     <script src="https://unpkg.com/element-plus"></script>
     <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <script>
+        window.onerror = function(message, source, lineno, colno, error) {
+            console.error('Global Error:', message, source, lineno, colno, error);
+            // alert('System Error: ' + message); // Optional: alert for visibility
+        };
+    </script>
     <style>
         html, body { margin: 0; padding: 0; height: 100%; font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', Arial, sans-serif; }
         #app { height: 100%; }
@@ -30,6 +36,10 @@
             <el-aside width="220px">
                 <div class="logo">QAI 智能测试</div>
                 <el-menu :default-active="activeMenu" @select="handleSelect" text-color="#bfcbd9" active-text-color="#409EFF">
+                    <el-menu-item index="projects">
+                        <el-icon><Folder /></el-icon>
+                        <span>项目管理</span>
+                    </el-menu-item>
                     <el-menu-item index="requirements">
                         <el-icon><Document /></el-icon>
                         <span>需求库</span>
@@ -37,6 +47,10 @@
                     <el-menu-item index="testcases">
                         <el-icon><List /></el-icon>
                         <span>用例库</span>
+                    </el-menu-item>
+                    <el-menu-item index="knowledge">
+                        <el-icon><Reading /></el-icon>
+                        <span>知识库</span>
                     </el-menu-item>
                     <el-menu-item index="settings">
                         <el-icon><Setting /></el-icon>
@@ -52,10 +66,47 @@
                 <el-main>
                     <div class="content-card">
                         
+                        <!-- 模块：项目管理 -->
+                        <div v-if="activeMenu === 'projects'">
+                            <div style="margin-bottom: 20px;">
+                                <el-button type="primary" @click="openProjectDialog()">+ 新增项目</el-button>
+                            </div>
+                            <el-row :gutter="20">
+                                <el-col :span="8" v-for="proj in projects" :key="proj.id" style="margin-bottom: 20px;">
+                                    <el-card shadow="hover">
+                                        <template #header>
+                                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span style="font-weight: bold; font-size: 16px;">{{ proj.name }}</span>
+                                                <el-button type="text" style="color: #F56C6C;" @click="deleteProject(proj)">删除</el-button>
+                                            </div>
+                                        </template>
+                                        <div style="color: #666; font-size: 14px; margin-bottom: 15px; height: 40px; overflow: hidden; text-overflow: ellipsis;">
+                                            {{ proj.description || '暂无描述' }}
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                                            <span style="font-size: 12px; color: #999;">创建于 {{ formatDate(proj.created_at).split(' ')[0] }}</span>
+                                            <el-button type="primary" size="small" @click="openVersionManager(proj)">版本管理</el-button>
+                                        </div>
+                                    </el-card>
+                                </el-col>
+                            </el-row>
+                            <div v-if="projects.length === 0" style="text-align: center; color: #999; margin-top: 50px;">
+                                暂无项目，请先创建
+                            </div>
+                        </div>
+
                         <!-- 模块：需求库 -->
                         <div v-if="activeMenu === 'requirements'">
                             <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
-                                <el-input v-model="reqSearch" placeholder="搜索需求标题" style="width: 300px;" prefix-icon="Search"></el-input>
+                                <div style="display: flex; gap: 10px;">
+                                    <el-input v-model="reqSearch" placeholder="搜索需求标题" style="width: 200px;" prefix-icon="Search"></el-input>
+                                    <el-select v-model="filterReqProjectId" placeholder="按项目筛选" clearable style="width: 150px;" @change="handleReqProjectChange">
+                                        <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id"></el-option>
+                                    </el-select>
+                                    <el-select v-model="filterReqVersionId" placeholder="按版本筛选" clearable style="width: 150px;" :disabled="!filterReqProjectId">
+                                        <el-option v-for="v in filteredVersions" :key="v.id" :label="v.version" :value="v.id"></el-option>
+                                    </el-select>
+                                </div>
                                 <div>
                                     <input type="file" ref="reqImportInput" style="display: none" accept=".md" @change="handleReqImportFile">
                                     <el-button type="warning" @click="triggerReqImport">导入 Markdown 需求</el-button>
@@ -68,12 +119,18 @@
                                 <el-table-column prop="created_at" label="创建时间" width="180">
                                     <template #default="scope">{{ formatDate(scope.row.created_at) }}</template>
                                 </el-table-column>
-                                <el-table-column label="操作" width="350">
+                                <el-table-column label="操作" width="280" fixed="right">
                                     <template #default="scope">
-                                        <el-button size="small" type="success" @click="handleGenerate(scope.row)">智能生成 (Wizard)</el-button>
-                                        <el-button size="small" type="warning" @click="handleSyncKB(scope.row)">同步知识库</el-button>
-                                        <el-button size="small" type="primary" @click="openReqDialog(scope.row)">编辑</el-button>
-                                        <el-button size="small" type="danger" @click="deleteReq(scope.row)">删除</el-button>
+                                        <div style="display: flex; gap: 5px; flex-wrap: nowrap;">
+                                            <el-tooltip content="智能生成用例" placement="top">
+                                                <el-button size="small" type="success" circle icon="MagicStick" @click="handleGenerate(scope.row)"></el-button>
+                                            </el-tooltip>
+                                            <el-tooltip content="同步至知识库" placement="top">
+                                                <el-button size="small" type="warning" circle icon="Upload" @click="handleSyncKB(scope.row)"></el-button>
+                                            </el-tooltip>
+                                            <el-button size="small" type="primary" icon="Edit" circle @click="openReqDialog(scope.row)"></el-button>
+                                            <el-button size="small" type="danger" icon="Delete" circle @click="deleteReq(scope.row)"></el-button>
+                                        </div>
                                     </template>
                                 </el-table-column>
                             </el-table>
@@ -81,37 +138,47 @@
 
                         <!-- 模块：用例库 -->
                         <div v-if="activeMenu === 'testcases'">
-                            <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
-                                <div style="display: flex; gap: 10px;">
-                                    <el-input v-model="caseSearch" placeholder="搜索用例标题/模块" style="width: 250px;" prefix-icon="Search"></el-input>
-                                    <el-select v-model="filterPriority" placeholder="优先级筛选" clearable style="width: 120px;">
-                                        <el-option label="P0 (最高)" value="P0"></el-option>
-                                        <el-option label="P1 (高)" value="P1"></el-option>
-                                        <el-option label="P2 (中)" value="P2"></el-option>
-                                        <el-option label="P3 (低)" value="P3"></el-option>
-                                    </el-select>
-                                    <el-select v-model="filterReqId" placeholder="按需求筛选" clearable style="width: 200px;">
-                                        <el-option v-for="req in requirements" :key="req.id" :label="req.title" :value="req.id"></el-option>
-                                    </el-select>
-                                </div>
-                                <div>
-                                    <input type="file" ref="importFileInput" style="display: none" accept=".csv, .xlsx" @change="handleImportFile">
-                                    <el-button type="info" text @click="downloadTemplate" style="margin-right: 10px;">下载导入模板</el-button>
-                                    <el-button type="warning" @click="triggerImport">导入数据</el-button>
-                                    <el-dropdown split-button type="success" @click="exportTestCases('xlsx')" @command="exportTestCases">
-                                        导出数据
-                                        <template #dropdown>
-                                            <el-dropdown-menu>
-                                                <el-dropdown-item command="xlsx">导出 Excel (.xlsx)</el-dropdown-item>
-                                                <el-dropdown-item command="csv">导出 CSV (.csv)</el-dropdown-item>
-                                            </el-dropdown-menu>
-                                        </template>
-                                    </el-dropdown>
-                                    <el-button type="primary" @click="openCaseDialog()">+ 新增用例</el-button>
-                                </div>
+                            <!-- Filter Row -->
+                            <div style="margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #f5f7fa; padding: 10px; border-radius: 4px;">
+                                <span style="font-size: 14px; color: #606266; font-weight: bold;">筛选：</span>
+                                <el-select v-model="filterCaseProjectId" placeholder="所属项目" clearable style="width: 150px;" @change="handleCaseProjectChange">
+                                    <el-option v-for="proj in projects" :key="proj.id" :label="proj.name" :value="proj.id"></el-option>
+                                </el-select>
+                                <el-select v-model="filterCaseVersionId" placeholder="所属版本" clearable style="width: 150px;" :disabled="!filterCaseProjectId">
+                                    <el-option v-for="ver in caseVersions" :key="ver.id" :label="ver.version" :value="ver.id"></el-option>
+                                </el-select>
+                                <el-select v-model="filterReqId" placeholder="关联需求" clearable filterable style="width: 200px;">
+                                    <el-option v-for="req in requirements" :key="req.id" :label="req.title" :value="req.id"></el-option>
+                                </el-select>
+                                <el-select v-model="filterPriority" placeholder="优先级" clearable style="width: 100px;">
+                                    <el-option label="P0" value="P0"></el-option>
+                                    <el-option label="P1" value="P1"></el-option>
+                                    <el-option label="P2" value="P2"></el-option>
+                                    <el-option label="P3" value="P3"></el-option>
+                                </el-select>
+                                <el-input v-model="caseSearch" placeholder="搜索标题/模块" style="width: 200px;" prefix-icon="Search" clearable></el-input>
                             </div>
-                            <el-table :data="filteredTestCases" border stripe v-loading="loadingCase">
-                                <el-table-column prop="id" label="ID" width="60"></el-table-column>
+
+                            <!-- Action Row -->
+                            <div style="margin-bottom: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+                                <input type="file" ref="importFileInput" style="display: none" accept=".csv, .xlsx" @change="handleImportFile">
+                                <el-button type="info" plain icon="Download" @click="downloadTemplate">下载模板</el-button>
+                                <el-button type="warning" plain icon="Upload" @click="triggerImport">导入数据</el-button>
+                                <el-dropdown split-button type="success" @click="exportTestCases('xlsx')" @command="exportTestCases">
+                                    <el-icon style="margin-right: 5px"><Download /></el-icon> 导出数据
+                                    <template #dropdown>
+                                        <el-dropdown-menu>
+                                            <el-dropdown-item command="xlsx">导出 Excel (.xlsx)</el-dropdown-item>
+                                            <el-dropdown-item command="csv">导出 CSV (.csv)</el-dropdown-item>
+                                        </el-dropdown-menu>
+                                    </template>
+                                </el-dropdown>
+                                <el-button type="danger" icon="Delete" @click="handleBatchDelete" plain>批量删除</el-button>
+                                <el-button type="primary" icon="Plus" @click="openCaseDialog()">新增用例</el-button>
+                            </div>
+
+                            <el-table :data="filteredTestCases" border stripe v-loading="loadingCase" height="calc(100vh - 350px)">
+                                <el-table-column type="index" label="序号" width="60"></el-table-column>
                                 <el-table-column prop="module" label="模块" width="100"></el-table-column>
                                 <el-table-column prop="title" label="用例标题" min-width="150" show-overflow-tooltip></el-table-column>
                                 <el-table-column prop="precondition" label="前置条件" show-overflow-tooltip></el-table-column>
@@ -133,6 +200,34 @@
                                 </el-table-column>
                             </el-table>
                         </div>
+
+                        <!-- 模块：知识库 -->
+                        <div v-if="activeMenu === 'knowledge'">
+                            <div style="margin-bottom: 20px;">
+                                <el-button type="primary" @click="openKBDialog()">+ 新增知识</el-button>
+                            </div>
+                            <el-row :gutter="20" style="margin-bottom: 20px;">
+                                <el-col :span="24">
+                                     <el-radio-group v-model="kbFilterCategory" size="large">
+                                        <el-radio-button v-for="cat in kbCategories" :key="cat" :label="cat">{{ cat }}</el-radio-button>
+                                    </el-radio-group>
+                                </el-col>
+                            </el-row>
+                            
+                            <div v-loading="loadingKB">
+                                <div v-for="item in knowledge.filter(k => k.category === kbFilterCategory)" :key="item.id" 
+                                     style="background: white; padding: 15px; margin-bottom: 10px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; border-left: 4px solid #409EFF;">
+                                    <el-tag size="small" style="margin-bottom: 5px;" v-if="item.tags">{{ item.tags }}</el-tag>
+                                    <div style="font-size: 14px; line-height: 1.6; white-space: pre-wrap;">{{ item.content }}</div>
+                                    <el-button type="text" size="small" style="color: #F56C6C; position: absolute; top: 10px; right: 10px;" 
+                                               @click="deleteKB(item)">删除</el-button>
+                                </div>
+                                <div v-if="knowledge.filter(k => k.category === kbFilterCategory).length === 0" style="color: #999; text-align: center; padding: 40px; background: white; border-radius: 4px;">
+                                    暂无 {{ kbFilterCategory }} 相关内容
+                                </div>
+                            </div>
+                        </div>
+
 
                         <!-- 模块：系统设置 -->
                         <div v-if="activeMenu === 'settings'">
@@ -176,9 +271,58 @@
             </el-container>
         </el-container>
 
+        <!-- Dialog: Project -->
+        <el-dialog v-model="projectDialog.visible" title="新增项目" width="40%">
+            <el-form :model="projectForm" label-width="80px">
+                <el-form-item label="项目名称">
+                    <el-input v-model="projectForm.name"></el-input>
+                </el-form-item>
+                <el-form-item label="项目描述">
+                    <el-input v-model="projectForm.description" type="textarea"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="projectDialog.visible = false">取消</el-button>
+                <el-button type="primary" @click="submitProject" :loading="projectDialog.loading">确定</el-button>
+            </template>
+        </el-dialog>
+
+                <el-drawer v-model="versionDrawer.visible" :title="versionDrawer.title" size="50%">
+                    <div style="padding: 0 20px;">
+                        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+                            <el-input v-model="versionForm.version" placeholder="版本号 (e.g. v1.0)" style="width: 150px;"></el-input>
+                            <el-input v-model="versionForm.description" placeholder="版本描述" style="flex: 1;"></el-input>
+                            <el-button v-if="versionDrawer.isEdit" type="warning" @click="cancelEditVersion">取消编辑</el-button>
+                            <el-button type="primary" @click="submitVersion" :loading="versionDrawer.loading">
+                                {{ versionDrawer.isEdit ? '更新版本' : '添加版本' }}
+                            </el-button>
+                        </div>
+                        <el-table :data="versions" border stripe>
+                            <el-table-column prop="version" label="版本号" width="120"></el-table-column>
+                            <el-table-column prop="description" label="描述"></el-table-column>
+                            <el-table-column label="操作" width="150">
+                                <template #default="scope">
+                                    <el-button type="text" @click="editVersion(scope.row)">编辑</el-button>
+                                    <el-button type="text" style="color: #F56C6C;" @click="deleteVersion(scope.row)">删除</el-button>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </div>
+                </el-drawer>
+
         <!-- Dialog: Requirement -->
         <el-dialog v-model="reqDialog.visible" :title="reqDialog.isEdit ? '编辑需求' : '新增需求'" width="50%">
             <el-form :model="reqForm" label-width="80px">
+                <el-form-item label="所属项目">
+                    <el-select v-model="reqForm.projectId" placeholder="选择项目" style="width: 100%" @change="handleReqFormProjectChange">
+                        <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="所属版本">
+                    <el-select v-model="reqForm.version_id" placeholder="选择版本" style="width: 100%" :disabled="!reqForm.projectId">
+                        <el-option v-for="v in reqFormVersions" :key="v.id" :label="v.version" :value="v.id"></el-option>
+                    </el-select>
+                </el-form-item>
                 <el-form-item label="需求标题">
                     <el-input v-model="reqForm.title"></el-input>
                 </el-form-item>
@@ -243,6 +387,27 @@
             <template #footer>
                 <el-button @click="caseDialog.visible = false">取消</el-button>
                 <el-button type="primary" @click="submitCase" :loading="caseDialog.loading">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- Dialog: Knowledge Item -->
+        <el-dialog v-model="kbDialog.visible" title="新增知识条目" width="40%">
+            <el-form :model="kbForm" label-width="80px">
+                <el-form-item label="知识类型">
+                    <el-select v-model="kbForm.category" style="width: 100%">
+                        <el-option v-for="c in kbCategories" :key="c" :label="c" :value="c"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="内容描述">
+                    <el-input v-model="kbForm.content" type="textarea" :rows="4" placeholder="例如：订单金额必须大于0..."></el-input>
+                </el-form-item>
+                <el-form-item label="标签">
+                    <el-input v-model="kbForm.tags" placeholder="多个标签用逗号分隔"></el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="kbDialog.visible = false">取消</el-button>
+                <el-button type="primary" @click="submitKB" :loading="kbDialog.loading">确定</el-button>
             </template>
         </el-dialog>
 
@@ -319,13 +484,16 @@
         const { ElMessage, ElMessageBox } = ElementPlus;
         const icons = ElementPlusIconsVue;
 
-        const API_BASE = 'http://localhost:8000/api/v1';
+        // Use relative path for production/LAN deployment
+        // If hosted on root (http://ip:8000/), API is at /api/v1
+        // If running locally with separate ports (dev), fallback to localhost:8000
+        const API_BASE = window.location.port === '8080' ? 'http://localhost:8000/api/v1' : '/api/v1';
 
         const app = createApp({
             setup() {
                 const activeMenu = ref('requirements');
                 const currentTitle = computed(() => {
-                    const map = { requirements: '需求库', testcases: '用例库', settings: '系统设置' };
+                    const map = { requirements: '需求库', testcases: '用例库', settings: '系统设置', projects: '项目管理', knowledge: '知识库' };
                     return map[activeMenu.value];
                 });
 
@@ -338,6 +506,11 @@
                 const caseSearch = ref('');
                 const filterReqId = ref('');
                 const filterPriority = ref('');
+                
+                // Case Filters
+                const filterCaseProjectId = ref('');
+                const filterCaseVersionId = ref('');
+                const caseVersions = ref([]); // For case filter dropdown
 
                 // --- Settings ---
                 const settings = reactive({
@@ -349,7 +522,7 @@
 
                 // --- Dialogs ---
                 const reqDialog = reactive({ visible: false, isEdit: false, loading: false });
-                const reqForm = reactive({ id: null, title: '', content: '' });
+                const reqForm = reactive({ id: null, title: '', content: '', projectId: null, version_id: null });
                 
                 const caseDialog = reactive({ visible: false, isEdit: false, loading: false });
                 const caseForm = reactive({ 
@@ -376,6 +549,38 @@
 
                 // --- Script Gen State ---
                 const scriptDialog = reactive({ visible: false, code: '', loading: false });
+
+                const filterReqProjectId = ref('');
+                const filterReqVersionId = ref('');
+                const projects = ref([]);
+                const versions = ref([]); // For drawer
+                const allVersions = ref([]); // Cache all versions or load dynamically
+                const filteredVersions = computed(() => {
+                   // For filter dropdown, need versions of selected project
+                   // But we load versions only on demand? 
+                   // Let's load all versions for simplicity or load on change.
+                   if (!filterReqProjectId.value) return [];
+                   return allVersions.value.filter(v => v.project_id === filterReqProjectId.value);
+                });
+
+                // --- Project State ---
+                const projectDialog = reactive({ visible: false, loading: false });
+                const projectForm = reactive({ name: '', description: '' });
+                const versionDrawer = reactive({ visible: false, loading: false, projectId: null, title: '', isEdit: false, editId: null });
+                const versionForm = reactive({ version: '', description: '' });
+
+                // --- Knowledge State ---
+                const knowledge = ref([]);
+                const loadingKB = ref(false);
+                const kbDialog = reactive({ visible: false, loading: false });
+                const kbForm = reactive({ category: '业务规则', content: '', tags: '' });
+                const kbCategories = ['业务规则', '测试模式', '历史踩坑', '风险场景'];
+                const kbFilterCategory = ref('业务规则');
+
+                // --- Req Form State Additions ---
+                // reqForm needs projectId and version_id
+                // reqFormVersions for the dropdown in dialog
+                const reqFormVersions = ref([]);
 
                 // --- Watchers ---
                 watch(() => settings.provider, (newVal) => {
@@ -459,13 +664,51 @@
                     loadSettings();
                     fetchRequirements();
                     fetchTestCases();
+                    fetchProjects(); // Fix: Load projects on startup
                 });
 
+                // --- Methods: Knowledge ---
+                const fetchKnowledge = async () => {
+                    loadingKB.value = true;
+                    try {
+                        const res = await axios.get(`${API_BASE}/knowledge/?_t=${new Date().getTime()}`);
+                        knowledge.value = res.data;
+                    } catch (e) { console.error(e); }
+                    loadingKB.value = false;
+                };
+
+                const openKBDialog = () => {
+                    kbForm.content = '';
+                    kbForm.tags = '';
+                    kbDialog.visible = true;
+                };
+
+                const submitKB = async () => {
+                    if (!kbForm.content) return ElMessage.warning('请输入内容');
+                    kbDialog.loading = true;
+                    try {
+                        await axios.post(`${API_BASE}/knowledge/`, kbForm);
+                        ElMessage.success('添加成功');
+                        kbDialog.visible = false;
+                        fetchKnowledge();
+                    } catch (e) { ElMessage.error('添加失败'); }
+                    kbDialog.loading = false;
+                };
+
+                const deleteKB = async (row) => {
+                    try {
+                        await axios.delete(`${API_BASE}/knowledge/${row.id}`);
+                        ElMessage.success('删除成功');
+                        fetchKnowledge();
+                    } catch (e) { }
+                };
+                
                 // --- Methods: Common ---
                 const handleSelect = (index) => {
                     activeMenu.value = index;
                     if (index === 'requirements') fetchRequirements();
                     if (index === 'testcases') fetchTestCases();
+                    if (index === 'knowledge') fetchKnowledge();
                 };
                 
                 const formatDate = (str) => {
@@ -496,7 +739,10 @@
                 const fetchRequirements = async () => {
                     loadingReq.value = true;
                     try {
-                        const res = await axios.get(`${API_BASE}/requirements/`);
+                        const params = {};
+                        if (filterReqVersionId.value) params.version_id = filterReqVersionId.value;
+                        
+                        const res = await axios.get(`${API_BASE}/requirements/`, { params });
                         requirements.value = res.data;
                     } catch (e) { console.error(e); }
                     loadingReq.value = false;
@@ -504,32 +750,53 @@
 
                 const openReqDialog = (row = null) => {
                     reqDialog.isEdit = !!row;
-                    reqDialog.visible = true;
                     if (row) {
                         reqForm.id = row.id;
                         reqForm.title = row.title;
                         reqForm.content = row.content;
+                        // Handle version/project if editing
+                        if (row.version) {
+                            reqForm.projectId = row.version.project_id;
+                            reqForm.version_id = row.version.id; 
+                            // Load versions for this project
+                            fetchVersions(reqForm.projectId).then(vs => reqFormVersions.value = vs);
+                        } else {
+                            reqForm.projectId = '';
+                            reqForm.version_id = '';
+                            reqFormVersions.value = [];
+                        }
                     } else {
                         reqForm.id = null;
                         reqForm.title = '';
                         reqForm.content = '';
+                        reqForm.projectId = '';
+                        reqForm.version_id = '';
+                        reqFormVersions.value = [];
                     }
+                    reqDialog.visible = true;
                 };
 
                 const submitReq = async () => {
                     if (!reqForm.title || !reqForm.content) return ElMessage.warning('请填写完整');
                     reqDialog.loading = true;
                     try {
+                        const payload = { 
+                            title: reqForm.title, 
+                            content: reqForm.content,
+                            version_id: reqForm.version_id || null
+                        };
                         if (reqDialog.isEdit) {
-                            await axios.put(`${API_BASE}/requirements/${reqForm.id}`, reqForm);
+                            await axios.put(`${API_BASE}/requirements/${reqForm.id}`, payload);
                             ElMessage.success('更新成功');
                         } else {
-                            await axios.post(`${API_BASE}/requirements/`, reqForm);
+                            await axios.post(`${API_BASE}/requirements/`, payload);
                             ElMessage.success('创建成功');
                         }
                         reqDialog.visible = false;
                         fetchRequirements();
-                    } catch (e) { ElMessage.error('操作失败'); }
+                    } catch (e) {
+                        ElMessage.error('操作失败: ' + (e.response?.data?.detail || e.message));
+                    }
                     reqDialog.loading = false;
                 };
 
@@ -677,11 +944,26 @@
                     wizard.loading = true;
                     try {
                         for (const c of wizard.generatedCases) {
-                            await axios.post(`${API_BASE}/testcases/`, c);
+                            // Sanitize data for backend
+                            const payload = {
+                                requirement_id: wizard.reqId,
+                                module: c.module || '默认模块',
+                                title: c.title || '未命名用例',
+                                priority: ['P0', 'P1', 'P2', 'P3'].includes(c.priority) ? c.priority : 'P2',
+                                precondition: c.precondition || '',
+                                steps: Array.isArray(c.steps) ? c.steps.join('\n') : (c.steps || ''),
+                                expected_result: c.expected_result || '',
+                                remark: c.remark || ''
+                            };
+                            await axios.post(`${API_BASE}/testcases/`, payload);
                         }
                         ElMessage.success(`成功保存 ${wizard.generatedCases.length} 条用例`);
                         wizard.visible = false;
-                    } catch (e) { ElMessage.error('保存失败'); }
+                        fetchTestCases(); // Refresh list
+                    } catch (e) { 
+                        console.error(e);
+                        ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message)); 
+                    }
                     wizard.loading = false;
                 };
 
@@ -704,11 +986,157 @@
                     scriptDialog.loading = false;
                 };
 
+                // --- Methods: Projects ---
+                const fetchProjects = async () => {
+                    try {
+                        // Add timestamp to prevent browser caching
+                        const res = await axios.get(`${API_BASE}/projects/?_t=${new Date().getTime()}`);
+                        projects.value = res.data;
+                    } catch (e) { console.error(e); }
+                };
+
+                const fetchVersions = async (projectId) => {
+                    if (!projectId) return [];
+                    try {
+                        const res = await axios.get(`${API_BASE}/projects/${projectId}/versions?_t=${new Date().getTime()}`);
+                        // Update cache for filter
+                        const otherVersions = allVersions.value.filter(v => v.project_id !== projectId);
+                        allVersions.value = [...otherVersions, ...res.data];
+                        return res.data;
+                    } catch (e) { console.error(e); return []; }
+                };
+
+                const openProjectDialog = () => {
+                    projectForm.name = '';
+                    projectForm.description = '';
+                    projectDialog.visible = true;
+                };
+
+                const submitProject = async () => {
+                    if (!projectForm.name) return ElMessage.warning('请输入项目名称');
+                    projectDialog.loading = true;
+                    try {
+                        await axios.post(`${API_BASE}/projects/`, projectForm);
+                        ElMessage.success('创建成功');
+                        projectDialog.visible = false;
+                        fetchProjects();
+                    } catch (e) { ElMessage.error('创建失败'); }
+                    projectDialog.loading = false;
+                };
+
+                const deleteProject = async (proj) => {
+                    try {
+                        await ElMessageBox.confirm(`确定删除项目 "${proj.name}" 及其所有版本吗？`, '删除确认', { type: 'warning' });
+                        await axios.delete(`${API_BASE}/projects/${proj.id}`);
+                        ElMessage.success('删除成功');
+                        fetchProjects();
+                    } catch (e) {}
+                };
+
+                const openVersionManager = async (proj) => {
+                    versionDrawer.projectId = proj.id;
+                    versionDrawer.title = `版本管理 - ${proj.name}`;
+                    versionDrawer.visible = true;
+                    versionDrawer.isEdit = false;
+                    versionForm.version = '';
+                    versionForm.description = '';
+                    versions.value = await fetchVersions(proj.id);
+                };
+
+                const editVersion = (row) => {
+                    versionDrawer.isEdit = true;
+                    versionDrawer.editId = row.id;
+                    versionForm.version = row.version;
+                    versionForm.description = row.description;
+                };
+
+                const cancelEditVersion = () => {
+                    versionDrawer.isEdit = false;
+                    versionDrawer.editId = null;
+                    versionForm.version = '';
+                    versionForm.description = '';
+                };
+
+                const submitVersion = async () => {
+                    if (!versionForm.version) return ElMessage.warning('请输入版本号');
+                    versionDrawer.loading = true;
+                    try {
+                        if (versionDrawer.isEdit) {
+                            await axios.put(`${API_BASE}/versions/${versionDrawer.editId}`, versionForm);
+                            ElMessage.success('更新成功');
+                            cancelEditVersion();
+                        } else {
+                            await axios.post(`${API_BASE}/projects/${versionDrawer.projectId}/versions`, versionForm);
+                            ElMessage.success('添加成功');
+                            versionForm.version = '';
+                            versionForm.description = '';
+                        }
+                        versions.value = await fetchVersions(versionDrawer.projectId);
+                    } catch (e) { ElMessage.error('操作失败'); }
+                    versionDrawer.loading = false;
+                };
+
+                const deleteVersion = async (row) => {
+                    try {
+                        await axios.delete(`${API_BASE}/versions/${row.id}`);
+                        ElMessage.success('删除成功');
+                        versions.value = await fetchVersions(versionDrawer.projectId);
+                    } catch (e) { ElMessage.error('删除失败'); }
+                };
+
+                const handleReqProjectChange = async () => {
+                    filterReqVersionId.value = '';
+                    if (filterReqProjectId.value) {
+                        await fetchVersions(filterReqProjectId.value);
+                    }
+                    fetchRequirements();
+                };
+                
+                const handleReqFormProjectChange = async () => {
+                    reqForm.version_id = '';
+                    reqFormVersions.value = await fetchVersions(reqForm.projectId);
+                };
+
+                watch(filterReqVersionId, () => {
+                    fetchRequirements();
+                });
+
+                const handleCaseProjectChange = async () => {
+                    filterCaseVersionId.value = '';
+                    if (filterCaseProjectId.value) {
+                        caseVersions.value = await fetchVersions(filterCaseProjectId.value);
+                    } else {
+                        caseVersions.value = [];
+                    }
+                    // Remove direct call, let watcher handle it
+                };
+
+                // --- Watchers for Filters ---
+                watch([filterCaseProjectId, filterCaseVersionId, filterReqId], () => {
+                    // Use a small delay or nextTick to ensure UI/value is stable if needed, 
+                    // but usually watch is enough.
+                    // However, when project changes, version is cleared.
+                    // This might trigger two fetches: one for project change, one for version clear.
+                    // To debounce or handle gracefully:
+                    fetchTestCases();
+                });
+
                 // --- Methods: Test Cases ---
                 const fetchTestCases = async () => {
                     loadingCase.value = true;
                     try {
-                        const res = await axios.get(`${API_BASE}/testcases/`);
+                        const params = {};
+                        // Ensure version_id is passed if selected (strict check)
+                        if (filterCaseVersionId.value !== '' && filterCaseVersionId.value !== null && filterCaseVersionId.value !== undefined) {
+                             params.version_id = filterCaseVersionId.value;
+                        }
+                        // Also pass project_id if version is not selected but project is
+                        else if (filterCaseProjectId.value !== '' && filterCaseProjectId.value !== null && filterCaseProjectId.value !== undefined) {
+                             params.project_id = filterCaseProjectId.value;
+                        }
+                        
+                        console.log('Fetching cases with params:', params); // Debug log
+                        const res = await axios.get(`${API_BASE}/testcases/`, { params });
                         testCases.value = res.data;
                     } catch (e) { console.error(e); }
                     loadingCase.value = false;
@@ -775,6 +1203,41 @@
                     } catch (e) { if (e !== 'cancel') ElMessage.error('删除失败'); }
                 };
 
+                const handleBatchDelete = async () => {
+                    let msg = '确定要删除所有用例吗？此操作不可恢复！';
+                    const params = { confirm: true };
+                    
+                    if (filterCaseVersionId.value) {
+                        msg = '确定要删除当前选中版本下的所有用例吗？';
+                        params.version_id = filterCaseVersionId.value;
+                    } else if (filterCaseProjectId.value) {
+                        msg = '确定要删除当前选中项目下的所有用例吗？';
+                        params.project_id = filterCaseProjectId.value;
+                    } else if (filterReqId.value) {
+                         msg = '确定要删除当前选中需求下的所有用例吗？';
+                         params.requirement_id = filterReqId.value;
+                    }
+                    
+                    try {
+                        await ElMessageBox.confirm(msg, '高风险操作确认', { 
+                            confirmButtonText: '确定删除',
+                            cancelButtonText: '取消',
+                            type: 'error' 
+                        });
+                        
+                        loadingCase.value = true;
+                        const res = await axios.delete(`${API_BASE}/testcases/batch`, { params });
+                        ElMessage.success(res.data.message);
+                        fetchTestCases();
+                    } catch (e) {
+                        if (e !== 'cancel') {
+                             ElMessage.error('删除失败: ' + (e.response?.data?.detail || e.message));
+                        }
+                    } finally {
+                        loadingCase.value = false;
+                    }
+                };
+
                 return {
                     activeMenu, currentTitle, handleSelect, formatDate, getPriorityType,
                     requirements, testCases, loadingReq, loadingCase, reqSearch, caseSearch, filterReqId,
@@ -785,7 +1248,15 @@
                     genDialog,
                     wizard, wizardAnalyze, wizardNextToScenarios, wizardNextToCases, wizardSave,
                     scriptDialog, generateScript,
-                    exportTestCases, importFileInput, triggerImport, handleImportFile, downloadTemplate, filterPriority
+                    exportTestCases, importFileInput, triggerImport, handleImportFile, downloadTemplate, filterPriority,
+                    projects, projectDialog, projectForm, openProjectDialog, submitProject, deleteProject,
+                    versions, versionDrawer, versionForm, openVersionManager, submitVersion, deleteVersion, editVersion, cancelEditVersion,
+                    filterReqProjectId, filterReqVersionId, filteredVersions, handleReqProjectChange,
+                    filterCaseProjectId, filterCaseVersionId, caseVersions, handleCaseProjectChange,
+                    reqFormVersions, handleReqFormProjectChange,
+                    knowledge, loadingKB, kbDialog, kbForm, kbCategories, openKBDialog, submitKB, deleteKB,
+                    kbFilterCategory,
+                    handleBatchDelete
                 };
             }
         });
@@ -794,7 +1265,12 @@
             app.component(key, component);
         }
         app.use(ElementPlus);
+        app.config.errorHandler = (err, vm, info) => {
+            console.error('Vue Error:', err, info);
+            ElMessage.error('System Error: ' + err.message);
+        };
         app.mount('#app');
+        console.log('Vue App Mounted Successfully');
     </script>
 </body>
 </html>

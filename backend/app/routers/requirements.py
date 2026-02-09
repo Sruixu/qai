@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from app.core.database import get_session
 from app.core.vector_store import vector_store
-from app.models.models import Requirement, RequirementCreate, RequirementRead, RequirementUpdate, TestCase, TestCaseRead
+from app.models.models import Requirement, RequirementCreate, RequirementRead, RequirementUpdate, TestCase, TestCaseRead, KnowledgeItem
 from app.services.llm_service import llm_service
 from datetime import datetime
 import json
@@ -106,7 +106,23 @@ def sync_requirement_to_knowledge_base(requirement_id: int, session: Session = D
         }
     )
     
-    return {"message": "Synced to Knowledge Base"}
+    # Also sync to KnowledgeItem SQL table for visibility
+    # Check if exists to avoid duplicates
+    kb_content = f"【历史需求】{requirement.title}\n{requirement.content[:500]}..."
+    
+    existing_item = session.exec(select(KnowledgeItem).where(KnowledgeItem.content == kb_content)).first()
+    if existing_item:
+        return {"message": "已存在于知识库，无需重复同步"}
+
+    kb_item = KnowledgeItem(
+        category="业务规则", # Default category or maybe "历史需求"
+        content=kb_content,
+        tags="自动同步,需求归档"
+    )
+    session.add(kb_item)
+    session.commit()
+    
+    return {"message": "同步至知识库成功 (Vector + SQL)"}
 
 @router.post("/requirements/", response_model=RequirementRead)
 def create_requirement(requirement: RequirementCreate, session: Session = Depends(get_session)):
@@ -117,8 +133,18 @@ def create_requirement(requirement: RequirementCreate, session: Session = Depend
     return db_requirement
 
 @router.get("/requirements/", response_model=List[RequirementRead])
-def read_requirements(offset: int = 0, limit: int = 100, session: Session = Depends(get_session)):
-    requirements = session.exec(select(Requirement).offset(offset).limit(limit)).all()
+def read_requirements(
+    version_id: Optional[int] = None,
+    offset: int = 0, 
+    limit: int = 100, 
+    session: Session = Depends(get_session)
+):
+    query = select(Requirement)
+    if version_id:
+        query = query.where(Requirement.version_id == version_id)
+        
+    query = query.offset(offset).limit(limit)
+    requirements = session.exec(query).all()
     return requirements
 
 @router.get("/requirements/{requirement_id}", response_model=RequirementRead)

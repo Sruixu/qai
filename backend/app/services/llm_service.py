@@ -3,6 +3,9 @@ import json
 import re
 from langchain_openai import ChatOpenAI
 from app.core.vector_store import vector_store
+from sqlmodel import Session, select
+from app.core.database import engine
+from app.models.models import KnowledgeItem
 
 class LLMService:
     def __init__(self):
@@ -63,6 +66,26 @@ class LLMService:
                 pass
             return []
 
+    def _get_knowledge_rules(self) -> str:
+        """Fetch explicit rules from SQL Knowledge Base"""
+        try:
+            with Session(engine) as session:
+                # Get items from specific categories
+                rules = session.exec(select(KnowledgeItem).where(
+                    KnowledgeItem.category.in_(["业务规则", "历史踩坑", "风险场景"])
+                ).limit(10)).all()
+                
+                if not rules:
+                    return ""
+                
+                content = "【重要：请严格遵守以下团队知识库规则】\n"
+                for r in rules:
+                    content += f"- [{r.category}] {r.content}\n"
+                return content + "\n"
+        except Exception as e:
+            print(f"Fetch knowledge rules failed: {e}")
+            return ""
+
     def generate_test_cases(
         self, 
         requirement_content: str, 
@@ -82,7 +105,12 @@ class LLMService:
                 context_str += f"--- 历史需求 ---\n{doc['content']}\n"
                 context_str += f"--- 关联用例 ---\n{doc['metadata'].get('cases_json', '无')}\n\n"
         
-        system_prompt = """你是一位资深测试工程师。请根据给定的[当前需求]，参考[历史知识库]（如果有），编写详细的测试用例。
+        # 2. Add Explicit Rules
+        rules_str = self._get_knowledge_rules()
+        
+        system_prompt = f"""你是一位资深测试工程师。请根据给定的[当前需求]，参考[历史知识库]和[团队规则]，编写详细的测试用例。
+        
+{rules_str}
         
 输出必须是纯 JSON 数组格式，不要包含 Markdown 代码块标记，每个对象包含以下字段：
 - module: 模块名称
@@ -166,7 +194,11 @@ class LLMService:
             for doc in similar_docs:
                 context_str += f"- 历史需求: {doc['content'][:100]}...\n- 关联用例片段: {doc['metadata'].get('cases_json', '')[:200]}...\n"
 
+        # Add Explicit Rules
+        rules_str = self._get_knowledge_rules()
+
         system_prompt = f"""你是一名高级测试工程师。针对模块【{module}】下的场景【{scenario}】，编写详细测试用例。
+{rules_str}
 必须输出纯 JSON 数组，严禁输出任何解释性文字。字段：
 - module: 固定为 "{module}"
 - title: 用例标题

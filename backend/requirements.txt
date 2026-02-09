@@ -3,7 +3,10 @@ uvicorn
 sqlmodel
 langchain
 langchain-openai
-langchain-community
 chromadb
+pandas
+openpyxl
 python-multipart
+requests
 httpx
+zstandard
