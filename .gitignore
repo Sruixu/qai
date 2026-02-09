@@ -13,7 +13,10 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+*.bin
+backend/chroma_db/
 backend/app/chroma_db/
+
 backend/database.db
 
 # IDE
